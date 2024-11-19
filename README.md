@@ -1,21 +1,3 @@
-# SecioEx
+ # SecioEx
 
-**TODO: Add description**
-
-## Installation
-
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `secio_ex` to your list of dependencies in `mix.exs`:
-
-```elixir
-def deps do
-  [
-    {:secio_ex, "~> 0.1.0"}
-  ]
-end
-```
-
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/secio_ex>.
-
+A module that connects to and utilizes the sec-api.io API. Provides access to Query API, Stream API, and Full-Text Search functionality.
