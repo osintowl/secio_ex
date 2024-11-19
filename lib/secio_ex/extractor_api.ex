@@ -1,4 +1,4 @@
-defmodule ExtractorApi do
+defmodule SecioEx.ExtractorApi do
   @base_url "https://api.sec-api.io/extractor"
 
   @valid_10k_items ~w(1 1A 1B 1C 2 3 4 5 6 7 7A 8 9 9A 9B 10 11 12 13 14 15)
