@@ -4,7 +4,7 @@ defmodule SecioEx.MixProject do
   def project do
     [
       app: :secio_ex,
-      version: "0.1.1",
+      version: "0.1.2",
       elixir: "~> 1.16",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: ["lib", "lib/secio_ex"],
