@@ -1,6 +1,6 @@
 defmodule SecioEx.StreamApi do
   @moduledoc """
-  A WebSocket client for streaming SEC (Securities and Exchange Commission) filing data 
+  A WebSocket client for streaming SEC (Securities and Exchange Commission) filing data
   in real-time using the sec-api.io service.
 
   ## Example Usage

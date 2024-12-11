@@ -2,13 +2,13 @@ defmodule SecioEx.ExtractorApi do
   @base_url "https://api.sec-api.io/extractor"
 
   @valid_10k_items ~w(1 1A 1B 1C 2 3 4 5 6 7 7A 8 9 9A 9B 10 11 12 13 14 15)
-  @valid_10q_items ~w(part1item1 part1item2 part1item3 part1item4 part2item1 part2item1a 
+  @valid_10q_items ~w(part1item1 part1item2 part1item3 part1item4 part2item1 part2item1a
                       part2item2 part2item3 part2item4 part2item5 part2item6)
   @valid_8k_items ~w(1-1 1-2 1-3 1-4 1-5 2-1 2-2 2-3 2-4 2-5 2-6 3-1 3-2 3-3 4-1 4-2
                      5-1 5-2 5-3 5-4 5-5 5-6 5-7 5-8 6-1 6-2 6-3 6-4 6-5 6-6 6-10
                      7-1 8-1 9-1 signature)
   @moduledoc """
-  A way to look for specific sec filing fields in 10-k, 10-q, and 8-k filings. 
+  A way to look for specific sec filing fields in 10-k, 10-q, and 8-k filings.
   """
 
   @doc """
@@ -83,11 +83,30 @@ defmodule SecioEx.ExtractorApi do
     api_key = Keyword.fetch!(opts, :api_key)
     type = to_string(opts[:type] || :text)
 
+    # Allow forcing filing type through opts
+    filing_type = case Keyword.get(opts, :force_filing_type) do
+      nil ->
+        # Use the original determination if no force option
+        case determine_filing_type(url) do
+          {:ok, :ten_k} -> "10-K"
+          {:ok, :ten_q} -> "10-Q"
+          {:ok, :eight_k} -> "8-K"
+          _ -> nil
+        end
+      forced_type when forced_type in ["10-K", "10-Q", "8-K"] ->
+        forced_type
+      invalid_type ->
+        raise ArgumentError, "Invalid filing_type: #{invalid_type}. Must be one of: 10-K, 10-Q, 8-K"
+    end
+
     params = %{
       url: url,
       item: item,
       type: type
     }
+
+    # Only add filing_type to params if it's present
+    params = if filing_type, do: Map.put(params, :filing_type, filing_type), else: params
 
     case use_auth_header?(opts) do
       true ->
@@ -104,6 +123,7 @@ defmodule SecioEx.ExtractorApi do
         |> handle_response()
     end
   end
+
 
   defp use_auth_header?(opts) do
     Keyword.get(opts, :use_auth_header, true)
