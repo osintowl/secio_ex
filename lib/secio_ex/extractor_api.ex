@@ -11,39 +11,53 @@ defmodule SecioEx.ExtractorApi do
   A way to look for specific sec filing fields in 10-k, 10-q, and 8-k filings.
   """
 
-  @doc """
-  Extracts a section from an SEC filing.
+    @doc """
+    Extracts a section from an SEC filing.
 
-  ## Parameters
-    - url: URL of the SEC filing
-    - item: Section item to extract
-    - opts: Additional options including :api_key and :type
+    ## Parameters
+      - url: URL of the SEC filing
+      - item: Section item to extract
+      - opts: Additional options including:
+        - :api_key (required): Your SEC API key
+        - :type (optional): Return format, either :text or :html (default: :text)
+        - :force_filing_type (optional): Force the filing type, must be one of "10-K", "10-Q", or "8-K"
 
-  ## Examples
-      # Extract Risk Factors (Item 1A) from a 10-K filing
-      iex> SecioEx.ExtractorApi.extract(
-        "https://www.sec.gov/.../tsla-10k_20201231.htm",
-        "1A",
-        api_key: "your_api_key"
-      )
-      {:ok, "Risk Factors content..."}
+    ## Examples
+        # Extract Risk Factors (Item 1A) from a 10-K filing
+        iex> SecioEx.ExtractorApi.extract(
+          "https://www.sec.gov/.../tsla-10k_20201231.htm",
+          "1A",
+          api_key: "your_api_key"
+        )
+        {:ok, "Risk Factors content..."}
 
-      # Extract with HTML formatting
-      iex> SecioEx.ExtractorApi.extract(
-        "https://www.sec.gov/.../aapl-20210327.htm",
-        "8",
-        api_key: "your_api_key",
-        type: "html"
-      )
-      {:ok, "<html>Financial Statements content...</html>"}
-  """
-  def extract(url, item, opts \\ []) do
-    with {:ok, filing_type} <- determine_filing_type(url),
-         :ok <- validate_item(filing_type, item),
-         :ok <- validate_return_type(opts[:type] || :text) do
-      make_request(url, item, opts)
+        # Extract with HTML formatting and forced filing type
+        iex> SecioEx.ExtractorApi.extract(
+          "https://www.sec.gov/.../example.htm",
+          "1-1",
+          api_key: "your_api_key",
+          type: "html",
+          force_filing_type: "8-K"
+        )
+        {:ok, "<html>Filing content...</html>"}
+    """
+    def extract(url, item, opts \\ []) do
+      # Check for forced filing type first
+      filing_type = case Keyword.get(opts, :force_filing_type) do
+        "10-K" -> {:ok, :ten_k}
+        "10-Q" -> {:ok, :ten_q}
+        "8-K" -> {:ok, :eight_k}
+        nil -> determine_filing_type(url)  # Only try to determine if not forced
+        invalid -> {:error, "Invalid forced filing type: #{invalid}"}
+      end
+
+      with {:ok, type} <- filing_type,
+          :ok <- validate_item(type, item),
+          :ok <- validate_return_type(opts[:type] || :text) do
+        make_request(url, item, opts)
+      end
     end
-  end
+
 
   @doc """
   Determines the filing type (10-K, 10-Q, or 8-K) from the URL.
