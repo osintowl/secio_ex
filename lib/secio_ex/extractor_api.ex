@@ -100,7 +100,6 @@ defmodule SecioEx.ExtractorApi do
     # Allow forcing filing type through opts
     filing_type = case Keyword.get(opts, :force_filing_type) do
       nil ->
-        # Use the original determination if no force option
         case determine_filing_type(url) do
           {:ok, :ten_k} -> "10-K"
           {:ok, :ten_q} -> "10-Q"
@@ -122,36 +121,47 @@ defmodule SecioEx.ExtractorApi do
     # Only add filing_type to params if it's present
     params = if filing_type, do: Map.put(params, :filing_type, filing_type), else: params
 
-    case use_auth_header?(opts) do
+    do_make_request(params, api_key, opts, 1)
+  end
+
+  defp do_make_request(params, api_key, opts, attempt, max_attempts \\ 3) when attempt <= max_attempts do
+    # Calculate backoff time: 1s, 2s, 4s
+    backoff = :timer.seconds(Kernel.trunc(:math.pow(2, attempt - 1)))
+
+    result = case use_auth_header?(opts) do
       true ->
         Req.get(@base_url,
           params: params,
           headers: [{"Authorization", api_key}]
         )
-        |> handle_response()
 
       false ->
         Req.get(@base_url,
           params: Map.put(params, :token, api_key)
         )
-        |> handle_response()
+    end
+
+    case result do
+      {:ok, %Req.Response{status: 200, body: body}} ->
+        {:ok, body}
+
+      {:ok, %Req.Response{status: status, body: body}} when attempt < max_attempts ->
+        :timer.sleep(backoff)
+        do_make_request(params, api_key, opts, attempt + 1)
+
+      {:ok, %Req.Response{status: status, body: body}} ->
+        {:error, %{status_code: status, body: body}}
+
+      {:error, error} when attempt < max_attempts ->
+        :timer.sleep(backoff)
+        do_make_request(params, api_key, opts, attempt + 1)
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
-
   defp use_auth_header?(opts) do
     Keyword.get(opts, :use_auth_header, true)
-  end
-
-  defp handle_response({:ok, %Req.Response{status: 200, body: body}}) do
-    {:ok, body}
-  end
-
-  defp handle_response({:ok, %Req.Response{status: status, body: body}}) do
-    {:error, %{status_code: status, body: body}}
-  end
-
-  defp handle_response({:error, error}) do
-    {:error, error}
   end
 end
