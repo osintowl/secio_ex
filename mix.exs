@@ -4,7 +4,7 @@ defmodule SecioEx.MixProject do
   def project do
     [
       app: :secio_ex,
-      version: "0.1.4",
+      version: "0.1.5",
       elixir: "~> 1.16",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: ["lib", "lib/secio_ex"],
@@ -36,7 +36,7 @@ defmodule SecioEx.MixProject do
     [
       files: ~w(lib priv .formatter.exs mix.exs LICENSE*),
       licenses: ["BSD-3-Clause"],
-      links: %{"GitHub" => "https://github.com/nix2intel/secio_ex"}
+      links: %{"GitHub" => "https://github.com/osintowl/secio_ex"}
     ]
   end
 end
