@@ -4,8 +4,8 @@ defmodule SecioEx.MixProject do
   def project do
     [
       app: :secio_ex,
-      version: "0.1.5",
-      elixir: "~> 1.16",
+      version: "0.1.6",
+      elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: ["lib", "lib/secio_ex"],
       start_permanent: Mix.env() == :prod,
@@ -25,7 +25,7 @@ defmodule SecioEx.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:websockex, "~> 0.4.3"},
+      {:websockex, "~> 0.5"},
       {:jason, "~> 1.4"},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:req, "~> 0.5.6"}
