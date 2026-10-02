@@ -30,7 +30,7 @@ defmodule SecioEx.MappingApi do
       }]}
   """
   def map_cik(cik, opts \\ []) do
-    get_mapping("cik/#{cik}", opts)
+    get_mapping("cik/#{encode(cik)}", opts)
   end
 
   @doc """
@@ -45,7 +45,7 @@ defmodule SecioEx.MappingApi do
       }]}
   """
   def map_ticker(ticker, opts \\ []) do
-    get_mapping("ticker/#{ticker}", opts)
+    get_mapping("ticker/#{encode(ticker)}", opts)
   end
 
   @doc """
@@ -60,7 +60,7 @@ defmodule SecioEx.MappingApi do
       }]}
   """
   def map_cusip(cusip, opts \\ []) do
-    get_mapping("cusip/#{cusip}", opts)
+    get_mapping("cusip/#{encode(cusip)}", opts)
   end
 
   @doc """
@@ -74,7 +74,7 @@ defmodule SecioEx.MappingApi do
       }]}
   """
   def map_name(name, opts \\ []) do
-    get_mapping("name/#{name}", opts)
+    get_mapping("name/#{encode(name)}", opts)
   end
 
   @doc """
@@ -89,7 +89,7 @@ defmodule SecioEx.MappingApi do
       }]}
   """
   def list_by_exchange(exchange, opts \\ []) do
-    get_mapping("exchange/#{exchange}", opts)
+    get_mapping("exchange/#{encode(exchange)}", opts)
   end
 
   @doc """
@@ -104,7 +104,7 @@ defmodule SecioEx.MappingApi do
       }]}
   """
   def list_by_sector(sector, opts \\ []) do
-    get_mapping("sector/#{sector}", opts)
+    get_mapping("sector/#{encode(sector)}", opts)
   end
 
   @doc """
@@ -119,42 +119,12 @@ defmodule SecioEx.MappingApi do
       }]}
   """
   def list_by_industry(industry, opts \\ []) do
-    get_mapping("industry/#{industry}", opts)
+    get_mapping("industry/#{encode(industry)}", opts)
   end
-
-  # Private Functions
 
   defp get_mapping(path, opts) do
-    api_key = Keyword.fetch!(opts, :api_key)
-
-    case use_auth_header?(opts) do
-      true ->
-        Req.get(URI.encode("#{@base_url}/#{path}"),
-          headers: [{"Authorization", api_key}]
-        )
-        |> handle_response()
-
-      false ->
-        Req.get("#{@base_url}/#{path}",
-          params: [token: api_key]
-        )
-        |> handle_response()
-    end
+    SecioEx.Client.get("#{@base_url}/#{path}", opts)
   end
 
-  defp use_auth_header?(opts) do
-    Keyword.get(opts, :use_auth_header, true)
-  end
-
-  defp handle_response({:ok, %Req.Response{status: 200, body: body}}) do
-    {:ok, body}
-  end
-
-  defp handle_response({:ok, %Req.Response{status: status, body: body}}) do
-    {:error, %{status_code: status, body: body}}
-  end
-
-  defp handle_response({:error, error}) do
-    {:error, error}
-  end
+  defp encode(value), do: SecioEx.Client.encode_segment(value)
 end

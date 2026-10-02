@@ -1,17 +1,20 @@
-# lib/secio_ex/download_api.ex
 defmodule SecioEx.DownloadApi do
-  @download_url "https://archive.sec-api.io"
+  @mirror "https://edgar-mirror.sec-api.io"
   @pdf_url "https://api.sec-api.io/filing-reader"
 
   @moduledoc """
-  Generate Pdf's and download filings and files from the SEC database. 
+  Download filings from the EDGAR mirror and render them as PDFs.
+
+  `download/2` accepts a path after `/data/` or a full EDGAR URL. Viewer
+  prefixes `/ix?doc=/` and `/ix.xhtml?doc=/` are removed before the path is
+  taken from `/edgar/data/`. PDFs still come from `/filing-reader`.
   """
 
   @doc """
   Downloads a filing or exhibit from SEC EDGAR.
 
   ## Parameters
-    - path: The path to the file on SEC EDGAR (after /data/)
+    - path: A path after `/data/`, or a `sec.gov` archives URL
     - opts: Keyword list of options including :api_key
 
   ## Examples
@@ -22,12 +25,50 @@ defmodule SecioEx.DownloadApi do
       {:ok, "filing content..."}
   """
   def download(path, opts \\ []) do
-    api_key = Keyword.fetch!(opts, :api_key)
+    SecioEx.Client.get_absolute(@mirror <> archive_path(path), opts)
+  end
 
-    Req.get("#{@download_url}/#{path}",
-      headers: [{"Authorization", api_key}]
-    )
-    |> handle_response()
+  @doc """
+  Mirror path for an EDGAR file.
+
+  A bare path is returned with a leading slash. An archives URL, including
+  the `/ix?doc=` viewer form, is reduced to the path after `/edgar/data/`.
+  """
+  def archive_path(input) when is_binary(input) do
+    path =
+      input
+      |> String.trim()
+      |> String.replace("/ix.xhtml?doc=/", "/")
+      |> String.replace("/ix?doc=/", "/")
+      |> drop_suffix("#")
+      |> drop_suffix("?")
+
+    relative =
+      cond do
+        path == "" ->
+          raise ArgumentError, "invalid EDGAR path"
+
+        String.contains?(path, "/edgar/data/") ->
+          path |> String.split("/edgar/data/", parts: 2) |> Enum.at(1)
+
+        String.contains?(path, "://") ->
+          raise ArgumentError, "not an EDGAR archives URL"
+
+        true ->
+          path
+      end
+
+    relative =
+      relative
+      |> drop_suffix("&")
+      |> String.trim()
+      |> String.trim_leading("/")
+
+    if relative == "" or unsafe_path?(relative) do
+      raise ArgumentError, "invalid EDGAR path"
+    end
+
+    "/" <> relative
   end
 
   @doc """
@@ -45,15 +86,12 @@ defmodule SecioEx.DownloadApi do
       {:ok, <<PDF content...>>}
   """
   def generate_pdf(url, opts \\ []) do
-    api_key = Keyword.fetch!(opts, :api_key)
+    opts =
+      opts
+      |> Keyword.put(:auth, :query)
+      |> Keyword.put(:params, url: url)
 
-    Req.get(@pdf_url,
-      params: [
-        token: api_key,
-        url: url
-      ]
-    )
-    |> handle_pdf_response()
+    SecioEx.Client.get_absolute(@pdf_url, opts)
   end
 
   @doc """
@@ -75,33 +113,17 @@ defmodule SecioEx.DownloadApi do
       {:ok, "filing content..."}
   """
   def download_by_identifiers(cik, accession_no, filename, opts \\ []) do
-    path = "#{cik}/#{accession_no}/#{filename}"
-    download(path, opts)
+    download("#{cik}/#{accession_no}/#{filename}", opts)
   end
 
-  # Private Functions
-
-  defp handle_response({:ok, %Req.Response{status: 200, body: body}}) do
-    {:ok, body}
+  defp drop_suffix(value, marker) do
+    value |> String.split(marker, parts: 2) |> hd()
   end
 
-  defp handle_response({:ok, %Req.Response{status: status, body: body}}) do
-    {:error, %{status_code: status, body: body}}
-  end
+  defp unsafe_path?(path) do
+    lowered = String.downcase(path)
 
-  defp handle_response({:error, error}) do
-    {:error, error}
-  end
-
-  defp handle_pdf_response({:ok, %Req.Response{status: 200, body: body}}) do
-    {:ok, body}
-  end
-
-  defp handle_pdf_response({:ok, %Req.Response{status: status, body: body}}) do
-    {:error, %{status_code: status, body: body}}
-  end
-
-  defp handle_pdf_response({:error, error}) do
-    {:error, error}
+    String.contains?(path, "..") or String.contains?(lowered, "%2e%2e") or
+      String.contains?(path, "\\")
   end
 end

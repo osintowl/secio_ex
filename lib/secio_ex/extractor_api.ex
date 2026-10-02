@@ -11,53 +11,54 @@ defmodule SecioEx.ExtractorApi do
   A way to look for specific sec filing fields in 10-k, 10-q, and 8-k filings.
   """
 
-    @doc """
-    Extracts a section from an SEC filing.
+  @doc """
+  Extracts a section from an SEC filing.
 
-    ## Parameters
-      - url: URL of the SEC filing
-      - item: Section item to extract
-      - opts: Additional options including:
-        - :api_key (required): Your SEC API key
-        - :type (optional): Return format, either :text or :html (default: :text)
-        - :force_filing_type (optional): Force the filing type, must be one of "10-K", "10-Q", or "8-K"
+  ## Parameters
+    - url: URL of the SEC filing
+    - item: Section item to extract
+    - opts: Additional options including:
+      - :api_key (required): Your SEC API key
+      - :type (optional): Return format, either :text or :html (default: :text)
+      - :force_filing_type (optional): Force the filing type, must be one of "10-K", "10-Q", or "8-K"
 
-    ## Examples
-        # Extract Risk Factors (Item 1A) from a 10-K filing
-        iex> SecioEx.ExtractorApi.extract(
-          "https://www.sec.gov/.../tsla-10k_20201231.htm",
-          "1A",
-          api_key: "your_api_key"
-        )
-        {:ok, "Risk Factors content..."}
+  ## Examples
+      # Extract Risk Factors (Item 1A) from a 10-K filing
+      iex> SecioEx.ExtractorApi.extract(
+        "https://www.sec.gov/.../tsla-10k_20201231.htm",
+        "1A",
+        api_key: "your_api_key"
+      )
+      {:ok, "Risk Factors content..."}
 
-        # Extract with HTML formatting and forced filing type
-        iex> SecioEx.ExtractorApi.extract(
-          "https://www.sec.gov/.../example.htm",
-          "1-1",
-          api_key: "your_api_key",
-          type: "html",
-          force_filing_type: "8-K"
-        )
-        {:ok, "<html>Filing content...</html>"}
-    """
-    def extract(url, item, opts \\ []) do
-      # Check for forced filing type first
-      filing_type = case Keyword.get(opts, :force_filing_type) do
+      # Extract with HTML formatting and forced filing type
+      iex> SecioEx.ExtractorApi.extract(
+        "https://www.sec.gov/.../example.htm",
+        "1-1",
+        api_key: "your_api_key",
+        type: "html",
+        force_filing_type: "8-K"
+      )
+      {:ok, "<html>Filing content...</html>"}
+  """
+  def extract(url, item, opts \\ []) do
+    # Check for forced filing type first
+    filing_type =
+      case Keyword.get(opts, :force_filing_type) do
         "10-K" -> {:ok, :ten_k}
         "10-Q" -> {:ok, :ten_q}
         "8-K" -> {:ok, :eight_k}
-        nil -> determine_filing_type(url)  # Only try to determine if not forced
+        # Only try to determine if not forced
+        nil -> determine_filing_type(url)
         invalid -> {:error, "Invalid forced filing type: #{invalid}"}
       end
 
-      with {:ok, type} <- filing_type,
-          :ok <- validate_item(type, item),
-          :ok <- validate_return_type(opts[:type] || :text) do
-        make_request(url, item, opts)
-      end
+    with {:ok, type} <- filing_type,
+         :ok <- validate_item(type, item),
+         :ok <- validate_return_type(opts[:type] || :text) do
+      make_request(url, item, opts)
     end
-
+  end
 
   @doc """
   Determines the filing type (10-K, 10-Q, or 8-K) from the URL.
@@ -88,80 +89,36 @@ defmodule SecioEx.ExtractorApi do
   @doc """
   Validates the return type (text or html).
   """
-  def validate_return_type(type) when type in [:text, :html], do: :ok
+  def validate_return_type(type) when type in [:text, :html, "text", "html"], do: :ok
   def validate_return_type(_), do: {:error, "Invalid return type"}
 
   # Private Functions
 
   defp make_request(url, item, opts) do
-    api_key = Keyword.fetch!(opts, :api_key)
     type = to_string(opts[:type] || :text)
 
     # Allow forcing filing type through opts
-    filing_type = case Keyword.get(opts, :force_filing_type) do
-      nil ->
-        case determine_filing_type(url) do
-          {:ok, :ten_k} -> "10-K"
-          {:ok, :ten_q} -> "10-Q"
-          {:ok, :eight_k} -> "8-K"
-          _ -> nil
-        end
-      forced_type when forced_type in ["10-K", "10-Q", "8-K"] ->
-        forced_type
-      invalid_type ->
-        raise ArgumentError, "Invalid filing_type: #{invalid_type}. Must be one of: 10-K, 10-Q, 8-K"
-    end
+    filing_type =
+      case Keyword.get(opts, :force_filing_type) do
+        nil ->
+          case determine_filing_type(url) do
+            {:ok, :ten_k} -> "10-K"
+            {:ok, :ten_q} -> "10-Q"
+            {:ok, :eight_k} -> "8-K"
+            _ -> nil
+          end
 
-    params = %{
-      url: url,
-      item: item,
-      type: type
-    }
+        forced_type when forced_type in ["10-K", "10-Q", "8-K"] ->
+          forced_type
 
-    # Only add filing_type to params if it's present
-    params = if filing_type, do: Map.put(params, :filing_type, filing_type), else: params
+        invalid_type ->
+          raise ArgumentError,
+                "Invalid filing_type: #{invalid_type}. Must be one of: 10-K, 10-Q, 8-K"
+      end
 
-    do_make_request(params, api_key, opts, 1)
-  end
+    params = [url: url, item: item, type: type]
+    params = if filing_type, do: Keyword.put(params, :filing_type, filing_type), else: params
 
-  defp do_make_request(params, api_key, opts, attempt, max_attempts \\ 3) when attempt <= max_attempts do
-    # Calculate backoff time: 1s, 2s, 4s
-    backoff = :timer.seconds(Kernel.trunc(:math.pow(2, attempt - 1)))
-
-    result = case use_auth_header?(opts) do
-      true ->
-        Req.get(@base_url,
-          params: params,
-          headers: [{"Authorization", api_key}]
-        )
-
-      false ->
-        Req.get(@base_url,
-          params: Map.put(params, :token, api_key)
-        )
-    end
-
-    case result do
-      {:ok, %Req.Response{status: 200, body: body}} ->
-        {:ok, body}
-
-      {:ok, %Req.Response{status: status, body: body}} when attempt < max_attempts ->
-        :timer.sleep(backoff)
-        do_make_request(params, api_key, opts, attempt + 1)
-
-      {:ok, %Req.Response{status: status, body: body}} ->
-        {:error, %{status_code: status, body: body}}
-
-      {:error, error} when attempt < max_attempts ->
-        :timer.sleep(backoff)
-        do_make_request(params, api_key, opts, attempt + 1)
-
-      {:error, error} ->
-        {:error, error}
-    end
-  end
-
-  defp use_auth_header?(opts) do
-    Keyword.get(opts, :use_auth_header, true)
+    SecioEx.Client.get(@base_url, Keyword.put(opts, :params, params))
   end
 end

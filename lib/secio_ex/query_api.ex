@@ -1,4 +1,6 @@
 defmodule SecioEx.QueryApi do
+  require SecioEx.Search
+
   @queryapi_url "https://api.sec-api.io"
 
   @moduledoc """
@@ -20,24 +22,12 @@ defmodule SecioEx.QueryApi do
       iex> SecioEx.QueryApi.search("formType:\"10-Q\"", api_key: "your_api_key")
       {:ok, %{"total" => %{"value" => 10000, "relation" => "gte"}, "filings" => [...]}}
   """
-  def search(query, opts \\ []) do
-    from = Keyword.get(opts, :from, 0)
-    size = Keyword.get(opts, :size, 50)
-    sort = Keyword.get(opts, :sort, [%{"filedAt" => %{"order" => "desc"}}])
-    api_key = Keyword.fetch!(opts, :api_key)
-
-    payload = %{
-      query: query,
-      from: from,
-      size: size,
-      sort: sort
-    }
-
-    Req.post(@queryapi_url,
-      json: payload,
-      headers: [{"Authorization", api_key}]
+  def search(query, opts \\ []) when is_binary(query) do
+    SecioEx.Client.dataset(@queryapi_url, query, opts,
+      from: 0,
+      size: 50,
+      sort: [%{"filedAt" => %{"order" => "desc"}}]
     )
-    |> handle_response()
   end
 
   @doc """
@@ -76,17 +66,5 @@ defmodule SecioEx.QueryApi do
     search(query, opts)
   end
 
-  # Private Functions
-
-  defp handle_response({:ok, %Req.Response{status: 200, body: body}}) do
-    {:ok, body}
-  end
-
-  defp handle_response({:ok, %Req.Response{status: status, body: body}}) do
-    {:error, %{status_code: status, body: body}}
-  end
-
-  defp handle_response({:error, error}) do
-    {:error, error}
-  end
+  SecioEx.Search.pages()
 end

@@ -1,0 +1,18 @@
+{
+  "name": "secio_ex",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "remoteUser": "vscode",
+  "workspaceFolder": "/workspaces/secio_ex",
+  "mounts": [
+    "source=${localEnv:HOME}/Desktop/sec.txt,target=/home/vscode/Desktop/sec.txt,type=bind,readonly"
+  ],
+  "postCreateCommand": "mix deps.get",
+  "customizations": {
+    "vscode": {
+      "extensions": ["elixir-lsp.elixir-ls"]
+    }
+  }
+}

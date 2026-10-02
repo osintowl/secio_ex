@@ -33,9 +33,7 @@ defmodule SecioEx.FullTextSearch do
         api_key: "your_api_key"
       )
   """
-  def search(query, opts \\ []) do
-    api_key = Keyword.fetch!(opts, :api_key)
-
+  def search(query, opts \\ []) when is_binary(query) do
     payload =
       %{
         "query" => query
@@ -48,11 +46,7 @@ defmodule SecioEx.FullTextSearch do
       |> maybe_add_ciks(Keyword.get(opts, :ciks))
       |> maybe_add_page(Keyword.get(opts, :page))
 
-    Req.post(@fulltext_url,
-      json: payload,
-      headers: [{"Authorization", api_key}]
-    )
-    |> handle_response()
+    SecioEx.Client.post(@fulltext_url, payload, opts)
   end
 
   @doc """
@@ -96,6 +90,30 @@ defmodule SecioEx.FullTextSearch do
     search(query, opts)
   end
 
+  @doc """
+  Lazily walk full-text pages.
+
+  Each page holds up to 100 filings. The walk stops after a short page, an
+  exact total, or page 100. `:page_size` changes only that fullness check.
+  A failed page raises `SecioEx.PageError`.
+  """
+  def stream(query, opts \\ []) when is_binary(query) do
+    SecioEx.Pages.by_page(fn page_opts -> search(query, Keyword.merge(opts, page_opts)) end, opts)
+  end
+
+  @doc """
+  Collect full-text pages. See `stream/2`.
+
+  A failure after the first page returns
+  `{:error, %{reason: reason, page: page, records: records}}`.
+  """
+  def all(query, opts \\ []) when is_binary(query) do
+    SecioEx.Pages.all_by_page(
+      fn page_opts -> search(query, Keyword.merge(opts, page_opts)) end,
+      opts
+    )
+  end
+
   # Private Functions
 
   defp maybe_add_form_types(payload, nil), do: payload
@@ -126,16 +144,4 @@ defmodule SecioEx.FullTextSearch do
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
-
-  defp handle_response({:ok, %Req.Response{status: 200, body: body}}) do
-    {:ok, body}
-  end
-
-  defp handle_response({:ok, %Req.Response{status: status, body: body}}) do
-    {:error, %{status_code: status, body: body}}
-  end
-
-  defp handle_response({:error, error}) do
-    {:error, error}
-  end
 end

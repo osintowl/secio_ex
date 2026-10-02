@@ -1,4 +1,6 @@
 defmodule SecioEx.DirectorsApi do
+  require SecioEx.Search
+
   @directorsapi_url "https://api.sec-api.io/directors-and-board-members"
 
   @moduledoc """
@@ -20,24 +22,12 @@ defmodule SecioEx.DirectorsApi do
       iex> SecioEx.DirectorsApi.search("ticker:AMZN", api_key: "your_api_key")
       {:ok, %{"total" => %{"value" => 25, "relation" => "eq"}, "data" => [...]}}
   """
-  def search(query, opts \\ []) do
-    from = Keyword.get(opts, :from, 0)
-    size = Keyword.get(opts, :size, 50)
-    sort = Keyword.get(opts, :sort, [%{"filedAt" => %{"order" => "desc"}}])
-    api_key = Keyword.fetch!(opts, :api_key)
-
-    payload = %{
-      query: query,
-      from: from,
-      size: size,
-      sort: sort
-    }
-
-    Req.post(@directorsapi_url,
-      json: payload,
-      headers: [{"Authorization", api_key}]
+  def search(query, opts \\ []) when is_binary(query) do
+    SecioEx.Client.dataset(@directorsapi_url, query, opts,
+      from: 0,
+      size: 50,
+      sort: [%{"filedAt" => %{"order" => "desc"}}]
     )
-    |> handle_response()
   end
 
   @doc """
@@ -88,17 +78,5 @@ defmodule SecioEx.DirectorsApi do
     search(query, opts)
   end
 
-  # Private Functions
-
-  defp handle_response({:ok, %Req.Response{status: 200, body: body}}) do
-    {:ok, body}
-  end
-
-  defp handle_response({:ok, %Req.Response{status: status, body: body}}) do
-    {:error, %{status_code: status, body: body}}
-  end
-
-  defp handle_response({:error, error}) do
-    {:error, error}
-  end
+  SecioEx.Search.pages()
 end
