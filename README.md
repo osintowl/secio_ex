@@ -1,12 +1,54 @@
 # SecioEx
 
-Elixir client for the [sec-api.io](https://sec-api.io) APIs.
+Elixir client for the [sec-api.io](https://sec-api.io) APIs. Version 0.2.0.
 
-## Develop
+## Install
 
-This project is set up as a dev container (Elixir 1.18, OTP 27). Open the folder in the container. The host file `~/Desktop/sec.txt` is mounted read-only at `~/Desktop/sec.txt`.
+```elixir
+def deps do
+  [
+    {:secio_ex, github: "osintowl/secio_ex", ref: "v0.2.0"}
+  ]
+end
+```
 
-## Live filing monitor
+The key is read from `:api_key`, `:api_key_file`, `SEC_API_KEY`, or `~/Desktop/sec.txt`. It is not logged.
+
+## Watch filings from your app
+
+`SecioEx.Watch` opens one live socket and runs every rule against each filing. The stream does not replay filings from before it connected.
+
+`:on` is a function you write. Watch calls it with one filing map when that rule matches. The return value is ignored. The call runs in its own process, so a slow alert does not stall the socket.
+
+```elixir
+defmodule MyApp.Alerts do
+  def cyber(filing) do
+    company = filing["companyName"]
+    url = filing["linkToFilingDetails"]
+    MyApp.Mailer.send("Cyber 8-K: #{company} #{url}")
+  end
+
+  def form4(filing) do
+    IO.inspect(filing["accessionNo"], label: "insider filing")
+  end
+end
+
+children = [
+  {SecioEx.Watch,
+   rules: [
+     [name: :cyber, items: ["1.05"], on: &MyApp.Alerts.cyber/1],
+     [name: :insiders, form_types: ["4"], tickers: ["AAPL"], on: &MyApp.Alerts.form4/1]
+   ]}
+]
+```
+
+`:items` matches 8-K item numbers, and only on `8-K` or `8-K/A`. Several items match if any one of them is present. `:min` is a floor on the filing signal: `:low`, `:normal`, `:high`, or `:critical`. Critical means a cybersecurity 8-K (`1.05`), bankruptcy (`1.03`), restatement (`4.02`), delisting (`3.01`), change in control (`5.01`), a late `NT 10-K` / `NT 10-Q` / `NT 20-F`, or Form `25-NSE`. `:form_types`, `:tickers`, and `:ciks` use the same matching as the terminal. `8-K` also matches `8-K/A`.
+
+Leave `:on` off and pass `:subscriber` to receive `{:secio_ex, {:alert, name, filing}}` instead. If the callback raises, that same process receives `{:secio_ex, {:callback_error, name, message}}`.
+
+`SecioEx.Watch.matches?/2` checks a rule against one filing without opening a socket.
+
+## Live terminal
 
 ```bash
 mix deps.get
@@ -17,35 +59,34 @@ mix secio.monitor --plain --for 30
 
 The key is read from `--api-key-file`, `SEC_API_KEY`, or `~/Desktop/sec.txt`.
 
-8-K item 1.05 (material cybersecurity incident) is flagged critical, along with bankruptcy (1.03), restatement (4.02), delisting (3.01), and change in control (5.01).
+Dashboard keys: `q` quit, `a` alerts, `p` pause, `w` watch-only, `j`/`k` scroll, `r` back to live. `--forms`, `--tickers`, and `--ciks` limit what is kept. `--watch` highlights names without hiding the rest.
 
-Dashboard keys: `q` quit, `a` alerts, `p` pause, `w` watch-only, `j`/`k` scroll, `r` back to live.
+## Paginate a search
 
-## Watch from an application
-
-`SecioEx.Watch` opens one stream and runs many rules. The socket does not replay filings from before it connected. `:on` is called with one filing. A rule without `:on` sends `{:secio_ex, {:alert, name, filing}}` to `:subscriber`.
+`stream/2` walks a Lucene search until a short page, an exact total, or offset 10,000. `:limit` stops earlier. One query cannot return more than 10,000 hits. Split a longer range by date:
 
 ```elixir
-children = [
-  {SecioEx.Watch,
-   rules: [
-     [name: :cyber, items: ["1.05"], on: &MyApp.Alerts.cyber/1],
-     [name: :insiders, form_types: ["4"], tickers: ["AAPL"], on: &MyApp.Alerts.form4/1]
-   ]}
-]
+{:ok, filings} =
+  SecioEx.Pages.all_between(&SecioEx.QueryApi.search/2, "ticker:AAPL",
+    from_date: "2024-01-01",
+    to_date: "2024-03-31",
+    window_days: 31
+  )
 ```
 
-`:items` matches 8-K items, including `8-K/A`. `:min` sets a floor of `:low`, `:normal`, `:high`, or `:critical`. `:form_types`, `:tickers`, and `:ciks` use the same matching as the terminal monitor.
-
-## HTTP APIs
-
-Every call accepts `api_key:` or reads `SEC_API_KEY` / `~/Desktop/sec.txt`.
-
-Lucene searches also accept `:from`, `:size`, and `:sort`. `stream/2` and `all/2` request the next page until a short page, an exact total, or offset 10,000. `:limit` stops earlier. One query cannot return more than 10,000 hits. Split a longer range with `SecioEx.Pages.date_windows/3` or `SecioEx.Pages.all_between/3` (`date_field: "releasedAt"` for enforcement releases). Each window still stops at 10,000.
+Use `date_field: "releasedAt"` for enforcement actions, litigation releases, and administrative proceedings. Each window still stops at 10,000.
 
 `all/2` returns `{:ok, records}`. If a later page fails, it returns `{:error, %{reason: reason, records: records}}` and keeps the rows already fetched. `stream/2` raises `SecioEx.PageError`. The message is the HTTP status.
 
-Full-text search uses `:page` (100 filings per page, at most 100 pages). `SecioEx.FullTextSearch.stream/2` walks those pages. N-PORT pages are 10 filings. SRO pages are 100.
+Full-text search uses `:page` (100 filings per page, at most 100 pages). N-PORT pages are 10 filings. SRO pages are 100.
+
+## Develop
+
+This project is set up as a dev container (Elixir 1.18, OTP 27). Open the folder in the container. The host file `~/Desktop/sec.txt` is mounted read-only at `~/Desktop/sec.txt`.
+
+## HTTP APIs
+
+Every call accepts `api_key:` or reads `SEC_API_KEY` / `~/Desktop/sec.txt`. Lucene searches also accept `:from`, `:size`, and `:sort`. `stream/2` and `all/2` page through one 10,000-hit window, as described above.
 
 | Module | What it calls |
 | --- | --- |
