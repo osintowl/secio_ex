@@ -15,7 +15,9 @@ defmodule SecioEx.Datasets do
 
   The token is sent as a query parameter on the file URL. File bodies are not
   JSON-decoded and are not loaded into memory. HTTP content-encoding is
-  unwrapped; a `.jsonl.gz` object stays gzip. File transfers are not retried.
+  unwrapped for gzip; a `.jsonl.gz` object stays gzip. Unsupported HTTP encodings
+  and invalid gzip responses return an error and remove the partial file.
+  File transfers are not retried by default.
   """
 
   @index "https://api.sec-api.io/bulk/indicies/master/index.json"
@@ -106,22 +108,8 @@ defmodule SecioEx.Datasets do
       true ->
         File.mkdir_p!(Path.dirname(dest))
         partial = dest <> ".partial"
-        stream = File.stream!(partial, 65_536, [:write, :binary])
 
-        result =
-          SecioEx.Client.get_absolute(
-            url,
-            Keyword.merge(opts,
-              into: stream,
-              decode_body: false,
-              compressed: true,
-              auth: :query,
-              receive_timeout: Keyword.get(opts, :receive_timeout, 600_000),
-              max_retries: Keyword.get(opts, :max_retries, 0)
-            )
-          )
-
-        case result do
+        case transfer_file(url, partial, opts) do
           {:ok, _body} ->
             finish_partial(partial, dest, size)
 
@@ -129,6 +117,98 @@ defmodule SecioEx.Datasets do
             File.rm(partial)
             {:error, reason}
         end
+    end
+  end
+
+  defp transfer_file(url, partial, opts) do
+    device = File.open!(partial, [:write, :binary])
+    decoder = :zlib.open()
+
+    try do
+      :ok = :zlib.inflateInit(decoder, 31)
+
+      result =
+        SecioEx.Client.get_absolute(
+          url,
+          Keyword.merge(opts,
+            into: &write_chunk(&1, &2, device, decoder),
+            decode_body: false,
+            compressed: false,
+            auth: :query,
+            receive_timeout: Keyword.get(opts, :receive_timeout, 600_000),
+            max_retries: Keyword.get(opts, :max_retries, 0)
+          )
+        )
+
+      case result do
+        {:ok, ""} ->
+          # Empty responses never invoke the chunk callback, including after a retry.
+          {:ok, 0} = :file.position(device, 0)
+          :ok = :file.truncate(device)
+          {:ok, :identity}
+
+        {:ok, :gzip} ->
+          # Validate the trailer as well, so truncated gzip is never published.
+          :ok = :zlib.inflateEnd(decoder)
+          {:ok, :gzip}
+
+        {:ok, {:download_error, reason}} ->
+          {:error, %{reason: reason}}
+
+        other ->
+          other
+      end
+    catch
+      :error, :data_error -> {:error, %{reason: :invalid_gzip}}
+    after
+      :zlib.close(decoder)
+      File.close(device)
+    end
+  end
+
+  defp write_chunk({:data, data}, {request, response}, device, decoder)
+       when response.status in 200..299 do
+    # Req does not decompress streamed bodies. Only remove HTTP encoding;
+    # the gzip archive represented by content-type must remain unchanged.
+    encoding =
+      case Req.Response.get_header(response, "content-encoding") do
+        [] -> :identity
+        [value] -> value |> String.trim() |> String.downcase()
+        _ -> :unsupported
+      end
+
+    if response.body == "" do
+      # A caller can opt into retries; restart a partial transfer on its next attempt.
+      {:ok, 0} = :file.position(device, 0)
+      :ok = :file.truncate(device)
+      :ok = :zlib.inflateReset(decoder)
+    end
+
+    {encoding, result} =
+      case encoding do
+        value when value in [:identity, "identity"] -> {:identity, IO.binwrite(device, data)}
+        "gzip" -> {:gzip, write_gzip(device, decoder, data)}
+        _ -> {:unsupported, {:error, :unsupported_content_encoding}}
+      end
+
+    case result do
+      :ok -> {:cont, {request, %{response | body: encoding}}}
+      {:error, reason} -> {:halt, {request, %{response | body: {:download_error, reason}}}}
+    end
+  end
+
+  defp write_chunk({:data, data}, {request, response}, _device, _decoder) do
+    {:cont, {request, %{response | body: response.body <> data}}}
+  end
+
+  defp write_gzip(device, decoder, data) do
+    # Drain bounded output buffers directly to disk instead of inflating into memory.
+    case :zlib.safeInflate(decoder, data) do
+      {:continue, bytes} ->
+        with :ok <- IO.binwrite(device, bytes), do: write_gzip(device, decoder, "")
+
+      {:finished, bytes} ->
+        IO.binwrite(device, bytes)
     end
   end
 
