@@ -27,7 +27,7 @@ defmodule SecioEx.MixProject do
       {:finch, "~> 0.21"},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:plug, "~> 1.15", only: :test},
-      {:req, "~> 0.5 or ~> 0.6 or ~> 0.7"}
+      {:req, "~> 0.6.2 or ~> 0.7.0"}
     ]
   end
 

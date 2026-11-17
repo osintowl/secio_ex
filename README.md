@@ -84,6 +84,29 @@ Full-text search uses `:page` (100 filings per page, at most 100 pages). N-PORT 
 
 This project is set up as a dev container (Elixir 1.18, OTP 27). Open the folder in the container. The host file `~/Desktop/sec.txt` is mounted read-only at `~/Desktop/sec.txt`.
 
+This checkout supports Req 0.6.2–0.6.x and 0.7.x. Req 0.5 and 0.6.0 are excluded
+because of upstream advisories for [archive decoding](https://github.com/wojtekmach/req/security/advisories/GHSA-655f-mp8p-96gv)
+and [multipart header injection](https://github.com/wojtekmach/req/security/advisories/GHSA-px9f-whj3-246m).
+The 0.6.2 minimum also allows current Finch releases. Both supported minor
+versions use the supervised `SecioEx.Finch` pool.
+
+```bash
+mix deps.get
+mix hex.outdated
+mix hex.audit
+mix format --check-formatted
+mix test
+```
+
+Tests need no SEC API key or external API access. HTTP client tests use a local
+loopback server to exercise the production Req/Finch adapter, including retries,
+error redaction, authentication, and raw compressed file responses.
+
+Dataset downloads remove HTTP gzip encoding in bounded chunks while preserving
+the gzip archive itself. Invalid or truncated HTTP gzip and unsupported HTTP
+encodings return an error and remove the partial file. Transfers use no retries
+by default; an explicit `max_retries:` restarts an interrupted file from byte zero.
+
 ## HTTP APIs
 
 Every call accepts `api_key:` or reads `SEC_API_KEY` / `~/Desktop/sec.txt`. Lucene searches also accept `:from`, `:size`, and `:sort`. `stream/2` and `all/2` page through one 10,000-hit window, as described above.

@@ -123,7 +123,7 @@ defmodule SecioEx.Client do
         retry: :transient,
         max_retries: Keyword.get(opts, :max_retries, 2),
         retry_log_level: false,
-        finch: [name: SecioEx.Finch]
+        finch: finch_options()
       ]
       |> maybe_params(params)
       |> maybe_opt(:into, opts[:into])
@@ -135,6 +135,15 @@ defmodule SecioEx.Client do
     req_opts
     |> Req.request()
     |> normalize(key)
+  end
+
+  defp finch_options do
+    # Req 0.7 introduced keyword options; 0.6 expects the pool name itself.
+    if Version.match?(to_string(Application.spec(:req, :vsn)), "~> 0.6.0") do
+      SecioEx.Finch
+    else
+      [name: SecioEx.Finch]
+    end
   end
 
   defp auth_mode(opts) do
