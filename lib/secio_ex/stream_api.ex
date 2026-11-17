@@ -9,7 +9,8 @@ defmodule SecioEx.StreamApi do
   Dropped connections reconnect with exponential backoff.
 
   The live terminal is `mix secio.monitor`. `SecioEx.Watch` runs named rules
-  on one connection.
+  on one connection. `wss://` connections check the server certificate
+  against the operating system trust store.
 
   A `:callback` runs in its own process. A slow callback cannot delay the
   pong that keeps the socket open. Subscriber messages are sent from the
@@ -54,18 +55,40 @@ defmodule SecioEx.StreamApi do
 
     url = @url <> "?" <> URI.encode_query(%{"apiKey" => api_key})
 
-    socket_opts = [
+    WebSockex.start_link(url, __MODULE__, state, connection_options(opts))
+  end
+
+  @doc false
+  def connection_options(opts \\ []) do
+    certs = trusted_cacerts()
+
+    options = [
       async: Keyword.get(opts, :async, true),
-      handle_initial_conn_failure: true
+      handle_initial_conn_failure: true,
+      insecure: false,
+      cacerts: certs,
+      ssl_options: [
+        verify: :verify_peer,
+        cacerts: certs,
+        depth: 4,
+        customize_hostname_check: [
+          match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
+        ]
+      ]
     ]
 
-    socket_opts =
-      case opts[:name] do
-        nil -> socket_opts
-        name -> Keyword.put(socket_opts, :name, name)
-      end
+    case opts[:name] do
+      nil -> options
+      name -> Keyword.put(options, :name, name)
+    end
+  end
 
-    WebSockex.start_link(url, __MODULE__, state, socket_opts)
+  defp trusted_cacerts do
+    Enum.map(:public_key.cacerts_get(), fn
+      der when is_binary(der) -> der
+      {:cert, der, _} when is_binary(der) -> der
+      {:cert, der} when is_binary(der) -> der
+    end)
   end
 
   @doc """
