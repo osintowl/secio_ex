@@ -1,13 +1,13 @@
 # SecioEx
 
-Elixir client for the [sec-api.io](https://sec-api.io) APIs. Version 0.2.0.
+Elixir client for the [sec-api.io](https://sec-api.io) APIs. Version 0.2.1.
 
 ## Install
 
 ```elixir
 def deps do
   [
-    {:secio_ex, github: "osintowl/secio_ex", ref: "v0.2.0"}
+    {:secio_ex, github: "osintowl/secio_ex", ref: "v0.2.1"}
   ]
 end
 ```
@@ -16,7 +16,7 @@ The key is read from `:api_key`, `:api_key_file`, `SEC_API_KEY`, or `~/Desktop/s
 
 ## Watch filings from your app
 
-`SecioEx.Watch` opens one live socket and runs every rule against each filing. The stream does not replay filings from before it connected.
+`SecioEx.Watch` opens one live socket and runs every rule against each filing. The socket checks the server certificate. The stream does not replay filings from before it connected.
 
 `:on` is a function you write. Watch calls it with one filing map when that rule matches. The return value is ignored. The call runs in its own process, so a slow alert does not stall the socket.
 

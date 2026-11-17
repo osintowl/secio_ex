@@ -6,13 +6,19 @@ defmodule SecioEx.Client do
   header. Pass `auth: :query` or `use_auth_header: false` to send it as the
   `token` query parameter instead.
 
-  Requests time out after 60 seconds and ask for a gzip body. Req retries
-  only transient failures (408, 429, 500, 502, 503, 504, and transport
-  errors). A 401 or 404 is returned immediately. Retry logs are disabled
+  Requests to `sec-api.io` time out after 60 seconds and ask for one gzip
+  encoding. Stacked encodings are rejected. A gzip body is inflated only up
+  to 512 MiB, and only up to 100 times the compressed size once it passes
+  1 MiB. Redirects to another origin are not followed. Req retries only
+  transient failures (408, 429, 500, 502, 503, 504, and transport errors).
+  A 401 or 404 is returned immediately. Retry and redirect logs are disabled
   so a request URL cannot end up in the log.
   """
 
   @base "https://api.sec-api.io"
+  @max_inflated_bytes 512 * 1024 * 1024
+  @max_inflate_ratio 100
+  @min_inflated_bytes 1_048_576
 
   @doc """
   POST a Lucene search.
@@ -113,16 +119,19 @@ defmodule SecioEx.Client do
           {[], Keyword.put(params, :token, key)}
       end
 
+    headers = maybe_gzip(headers, url, opts)
+
     req_opts =
       [
         method: method,
         url: url,
         headers: headers,
         receive_timeout: Keyword.get(opts, :receive_timeout, 60_000),
-        compressed: Keyword.get(opts, :compressed, true),
+        compressed: false,
         retry: :transient,
         max_retries: Keyword.get(opts, :max_retries, 2),
         retry_log_level: false,
+        redirect_log_level: false,
         finch: [name: SecioEx.Finch]
       ]
       |> maybe_params(params)
@@ -133,9 +142,57 @@ defmodule SecioEx.Client do
     req_opts = if opts[:plug], do: Keyword.put(req_opts, :plug, opts[:plug]), else: req_opts
 
     req_opts
+    |> Req.new()
+    |> Req.Request.prepend_response_steps(secio_ex_redirect: &guard_redirect/1)
     |> Req.request()
-    |> normalize(key)
+    |> normalize(key, opts)
   end
+
+  defp maybe_gzip(headers, url, opts) do
+    if Keyword.get(opts, :compressed, true) and opts[:into] == nil and trusted_api_host?(url) do
+      [{"accept-encoding", "gzip"} | headers]
+    else
+      headers
+    end
+  end
+
+  defp trusted_api_host?(url) do
+    host = url |> URI.parse() |> Map.get(:host) |> to_string() |> String.downcase()
+    host == "sec-api.io" or String.ends_with?(host, ".sec-api.io")
+  end
+
+  defp guard_redirect({request, %Req.Response{status: status} = response})
+       when status in [301, 302, 303, 307, 308] do
+    case Req.Response.get_header(response, "location") do
+      [location | _] ->
+        target = URI.merge(request.url, location)
+
+        if same_origin?(request.url, target) do
+          {request, response}
+        else
+          Req.Request.halt(request, response)
+        end
+
+      _ ->
+        {request, response}
+    end
+  end
+
+  defp guard_redirect(other), do: other
+
+  defp same_origin?(%URI{} = left, %URI{} = right) do
+    origin(left) == origin(right)
+  end
+
+  defp origin(%URI{} = uri) do
+    scheme = uri.scheme |> to_string() |> String.downcase()
+    host = uri.host |> to_string() |> String.downcase()
+    {scheme, host, origin_port(scheme, uri.port)}
+  end
+
+  defp origin_port("http", nil), do: 80
+  defp origin_port("https", nil), do: 443
+  defp origin_port(_scheme, port), do: port
 
   defp auth_mode(opts) do
     cond do
@@ -159,17 +216,106 @@ defmodule SecioEx.Client do
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
-  defp normalize({:ok, %Req.Response{status: status, body: body}}, _key)
+  defp normalize({:ok, %Req.Response{status: status} = response}, _key, opts)
        when status in 200..299 do
-    {:ok, body}
+    inflate_response(response, opts)
   end
 
-  defp normalize({:ok, %Req.Response{status: status, body: body}}, key) do
+  defp normalize({:ok, %Req.Response{status: status, body: body}}, key, _opts) do
     {:error, %{status_code: status, body: redact(body, key)}}
   end
 
-  defp normalize({:error, error}, key) do
+  defp normalize({:error, error}, key, _opts) do
     {:error, redact_error(error, key)}
+  end
+
+  defp inflate_response(%Req.Response{body: body}, _opts) when not is_binary(body) do
+    {:ok, body}
+  end
+
+  defp inflate_response(%Req.Response{body: body} = response, opts) do
+    case encodings(response) do
+      [] ->
+        {:ok, body}
+
+      ["gzip"] ->
+        with {:ok, inflated} <- inflate_gzip(body, inflate_limit(body, opts)) do
+          {:ok, maybe_decode_json(inflated, response)}
+        end
+
+      _other ->
+        {:error, %{reason: :unsupported_encoding}}
+    end
+  end
+
+  defp encodings(response) do
+    response
+    |> Req.Response.get_header("content-encoding")
+    |> Enum.flat_map(&String.split(&1, ","))
+    |> Enum.map(&(&1 |> String.trim() |> String.downcase()))
+    |> Enum.reject(&(&1 in ["", "identity"]))
+  end
+
+  defp inflate_limit(body, opts) do
+    absolute = Keyword.get(opts, :max_inflated_bytes, @max_inflated_bytes)
+    ratio = Keyword.get(opts, :max_inflate_ratio, @max_inflate_ratio)
+    floor = Keyword.get(opts, :min_inflated_bytes, @min_inflated_bytes)
+    min(absolute, max(floor, byte_size(body) * ratio))
+  end
+
+  defp inflate_gzip(body, limit) do
+    z = :zlib.open()
+
+    try do
+      :zlib.inflateInit(z, 31)
+      collect_inflate(z, body, limit, 0, [])
+    catch
+      :error, _ -> {:error, %{reason: :invalid_encoding}}
+    after
+      :zlib.close(z)
+    end
+  end
+
+  defp collect_inflate(z, data, limit, size, acc) do
+    case :zlib.safeInflate(z, data) do
+      {:continue, output} ->
+        size = size + IO.iodata_length(output)
+
+        if size > limit do
+          {:error, %{reason: :inflated_too_large}}
+        else
+          collect_inflate(z, [], limit, size, [output | acc])
+        end
+
+      {:finished, output} ->
+        size = size + IO.iodata_length(output)
+
+        if size > limit do
+          {:error, %{reason: :inflated_too_large}}
+        else
+          {:ok, IO.iodata_to_binary(Enum.reverse([output | acc]))}
+        end
+
+      {:error, _} ->
+        {:error, %{reason: :invalid_encoding}}
+    end
+  end
+
+  defp maybe_decode_json(body, response) do
+    type =
+      response
+      |> Req.Response.get_header("content-type")
+      |> List.first("")
+      |> String.downcase()
+
+    if String.contains?(type, "json") do
+      case Jason.decode(body) do
+        {:ok, decoded} -> decoded
+        {:error, _} -> body
+      end
+    else
+      body
+    end
   end
 
   defp redact_error(error, key) do
